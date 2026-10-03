@@ -1,0 +1,44 @@
+---
+- name: Configure Elastic repository
+  hosts: logging:web
+  become: true
+  tasks:
+    - name: Install repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - python3-apt
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Download official Elastic signing key
+      ansible.builtin.get_url:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        dest: /usr/share/keyrings/elastic.asc
+        owner: root
+        group: root
+        mode: "0644"
+        timeout: 30
+
+    - name: Add Yandex mirror with signature verification
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/elastic.asc] https://mirror.yandex.ru/mirrors/elastic/8/ stable main"
+        filename: elastic-8
+        state: present
+        update_cache: true
+
+    - name: Check available package versions
+      ansible.builtin.command:
+        argv:
+          - apt-cache
+          - policy
+          - "{{ elastic_package }}"
+      vars:
+        elastic_package: "{{ 'elasticsearch' if inventory_hostname in groups['elasticsearch'] else ('kibana' if inventory_hostname in groups['kibana'] else 'filebeat') }}"
+      register: package_policy
+      changed_when: false
+
+    - name: Show available version
+      ansible.builtin.debug:
+        var: package_policy.stdout_lines

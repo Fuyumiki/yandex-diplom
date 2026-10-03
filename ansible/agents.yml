@@ -1,0 +1,58 @@
+---
+- name: Configure active Zabbix agents
+  hosts: web:bastion:logging
+  become: true
+
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name: ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Zabbix repository
+      ansible.builtin.apt:
+        deb: https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-4+ubuntu22.04_all.deb
+
+    - name: Install agent
+      ansible.builtin.apt:
+        name: zabbix-agent2
+        state: present
+        update_cache: true
+
+    - name: Configure active checks
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: Server, value: "" }
+        - { key: ServerActive, value: "zabbix.ru-central1.internal:10051" }
+        - { key: Hostname, value: "{{ inventory_hostname }}" }
+      notify: Restart agent
+
+    - name: Enable and start agent
+      ansible.builtin.service:
+        name: zabbix-agent2
+        enabled: true
+        state: started
+
+    - name: Apply agent configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check connection to Zabbix server
+      ansible.builtin.wait_for:
+        host: zabbix.ru-central1.internal
+        port: 10051
+        timeout: 15
+
+    - name: Verify agent service
+      ansible.builtin.command: systemctl is-active zabbix-agent2
+      changed_when: false
+
+  handlers:
+    - name: Restart agent
+      ansible.builtin.service:
+        name: zabbix-agent2
+        state: restarted

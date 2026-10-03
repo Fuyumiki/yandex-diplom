@@ -1,0 +1,38 @@
+---
+- name: Install Zabbix packages
+  hosts: monitoring
+  become: true
+
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - python3-psycopg2
+          - acl
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install official Zabbix repository
+      ansible.builtin.apt:
+        deb: https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-4+ubuntu22.04_all.deb
+
+    - name: Install server, frontend, database and agent
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - zabbix-server-pgsql
+          - zabbix-frontend-php
+          - php8.1-pgsql
+          - zabbix-apache-conf
+          - zabbix-sql-scripts
+          - zabbix-agent2
+        state: present
+        update_cache: true
+
+    - name: Enable and start PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        enabled: true
+        state: started

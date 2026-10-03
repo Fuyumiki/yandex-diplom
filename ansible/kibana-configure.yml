@@ -1,0 +1,64 @@
+---
+- name: Configure Kibana
+  hosts: kibana
+  become: true
+  vars_prompt:
+    - name: kibana_system_password
+      prompt: "Enter password for kibana_system"
+      private: true
+
+  tasks:
+    - name: Configure Kibana connection
+      ansible.builtin.copy:
+        dest: /etc/kibana/kibana.yml
+        owner: root
+        group: kibana
+        mode: "0640"
+        content: |
+          server.name: diplom-kibana
+          server.host: "0.0.0.0"
+          server.port: 5601
+          elasticsearch.hosts: ["http://elasticsearch.ru-central1.internal:9200"]
+          elasticsearch.username: "kibana_system"
+          elasticsearch.password: {{ kibana_system_password | to_json }}
+          telemetry.enabled: false
+      no_log: true
+      diff: false
+      notify: Restart Kibana
+
+    - name: Limit Node.js heap to 1 GB
+      ansible.builtin.lineinfile:
+        path: /etc/kibana/node.options
+        regexp: '^--max-old-space-size='
+        line: '--max-old-space-size=1024'
+        create: true
+        owner: root
+        group: kibana
+        mode: "0640"
+      notify: Restart Kibana
+
+    - name: Enable and start Kibana
+      ansible.builtin.systemd:
+        name: kibana
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply pending restart
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for login page
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5601/login
+        status_code: 200
+        timeout: 10
+      register: kibana_page
+      until: kibana_page.status == 200
+      retries: 60
+      delay: 10
+
+  handlers:
+    - name: Restart Kibana
+      ansible.builtin.systemd:
+        name: kibana
+        state: restarted

@@ -1,0 +1,76 @@
+---
+- name: Configure Elasticsearch
+  hosts: elasticsearch
+  become: true
+  tasks:
+    - name: Persist virtual memory setting
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/90-elasticsearch.conf
+        content: "vm.max_map_count=262144\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply virtual memory setting
+      ansible.builtin.command:
+        cmd: sysctl -p /etc/sysctl.d/90-elasticsearch.conf
+      changed_when: false
+
+    - name: Configure single-node Elasticsearch
+      ansible.builtin.copy:
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: root
+        group: elasticsearch
+        mode: "0660"
+        backup: true
+        content: |
+          cluster.name: diplom-logs
+          node.name: elasticsearch
+          path.data: /var/lib/elasticsearch
+          path.logs: /var/log/elasticsearch
+          http.host: 0.0.0.0
+          http.port: 9200
+          transport.host: 127.0.0.1
+          discovery.type: single-node
+          xpack.security.enabled: true
+          xpack.security.autoconfiguration.enabled: false
+          xpack.security.enrollment.enabled: false
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.enabled: false
+      notify: Restart Elasticsearch
+
+    - name: Set JVM heap to 1 GB
+      ansible.builtin.copy:
+        dest: /etc/elasticsearch/jvm.options.d/heap.options
+        owner: root
+        group: elasticsearch
+        mode: "0644"
+        content: |
+          -Xms1g
+          -Xmx1g
+      notify: Restart Elasticsearch
+
+    - name: Enable and start Elasticsearch
+      ansible.builtin.systemd:
+        name: elasticsearch
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply pending restart
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify API requires authentication
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200/
+        status_code: 401
+      register: elastic_api
+      until: elastic_api.status == 401
+      retries: 30
+      delay: 5
+
+  handlers:
+    - name: Restart Elasticsearch
+      ansible.builtin.systemd:
+        name: elasticsearch
+        state: restarted

@@ -1,0 +1,87 @@
+---
+- name: Configure Zabbix database and server
+  hosts: monitoring
+  become: true
+
+  vars_prompt:
+    - name: zabbix_db_password
+      prompt: "Придумай пароль БД Zabbix: минимум 20 латинских букв и цифр"
+      private: true
+      confirm: true
+
+  tasks:
+    - name: Validate password format
+      ansible.builtin.assert:
+        that:
+          - zabbix_db_password is match('^[A-Za-z0-9]{20,}$')
+        fail_msg: "Используй минимум 20 латинских букв и цифр."
+      no_log: true
+
+    - name: Create database user
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: zabbix
+        password: "{{ zabbix_db_password }}"
+      no_log: true
+
+    - name: Create database
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: zabbix
+        owner: zabbix
+        encoding: UTF8
+        template: template0
+
+    - name: Check whether schema exists
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: zabbix
+        query: "SELECT to_regclass('public.dbversion') IS NOT NULL AS present"
+      register: schema_check
+
+    - name: Import initial schema
+      become_user: zabbix
+      ansible.builtin.shell: |
+        set -o pipefail
+        zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz |
+          psql -v ON_ERROR_STOP=1 --single-transaction -d zabbix
+      args:
+        executable: /bin/bash
+      when: not schema_check.query_result[0].present
+
+    - name: Configure database connection
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_server.conf
+        regexp: "^#?\\s*{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        owner: root
+        group: zabbix
+        mode: "0640"
+      loop:
+        - { key: DBHost, value: localhost }
+        - { key: DBName, value: zabbix }
+        - { key: DBUser, value: zabbix }
+        - { key: DBPassword, value: "{{ zabbix_db_password }}" }
+      no_log: true
+      notify: Restart Zabbix
+
+    - name: Enable and start Zabbix server
+      ansible.builtin.service:
+        name: zabbix-server
+        enabled: true
+        state: started
+
+    - name: Apply configuration changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check Zabbix server port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 10051
+        timeout: 60
+
+  handlers:
+    - name: Restart Zabbix
+      ansible.builtin.service:
+        name: zabbix-server
+        state: restarted

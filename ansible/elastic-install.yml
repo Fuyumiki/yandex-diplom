@@ -1,0 +1,36 @@
+---
+- name: Install Elastic Stack packages
+  hosts: logging:web
+  become: true
+  vars:
+    elastic_version: "8.19.21"
+    elastic_package: "{{ 'elasticsearch' if inventory_hostname in groups['elasticsearch'] else ('kibana' if inventory_hostname in groups['kibana'] else 'filebeat') }}"
+
+  tasks:
+    - name: Install the selected version
+      ansible.builtin.apt:
+        name: "{{ elastic_package }}={{ elastic_version }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        policy_rc_d: 101
+      no_log: true
+
+    - name: Hold package version
+      ansible.builtin.dpkg_selections:
+        name: "{{ elastic_package }}"
+        selection: hold
+
+    - name: Read installed version
+      ansible.builtin.command:
+        argv:
+          - dpkg-query
+          - -W
+          - "-f=${Package} ${Version}\n"
+          - "{{ elastic_package }}"
+      register: installed_version
+      changed_when: false
+
+    - name: Show installed version
+      ansible.builtin.debug:
+        var: installed_version.stdout

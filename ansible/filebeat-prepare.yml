@@ -1,0 +1,76 @@
+---
+- name: Prepare Elasticsearch for nginx logs
+  hosts: elasticsearch
+  gather_facts: false
+  vars_prompt:
+    - name: elastic_password
+      prompt: "Enter existing elastic password"
+      private: true
+    - name: filebeat_password
+      prompt: "Choose a NEW password for filebeat_writer"
+      private: true
+      confirm: true
+
+  tasks:
+    - name: Create nginx index template
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200/_index_template/nginx-logs
+        method: PUT
+        url_username: elastic
+        url_password: "{{ elastic_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_patterns: ["nginx-*"]
+          priority: 200
+          template:
+            settings:
+              number_of_shards: 1
+              number_of_replicas: 0
+            mappings:
+              properties:
+                "@timestamp":
+                  type: date
+                message:
+                  type: text
+                host:
+                  properties:
+                    name:
+                      type: keyword
+                event:
+                  properties:
+                    dataset:
+                      type: keyword
+        status_code: 200
+      no_log: true
+
+    - name: Create publishing role
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200/_security/role/nginx_writer
+        method: PUT
+        url_username: elastic
+        url_password: "{{ elastic_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          cluster: ["monitor"]
+          indices:
+            - names: ["nginx-*"]
+              privileges: ["auto_configure", "create_doc"]
+        status_code: 200
+      no_log: true
+
+    - name: Create Filebeat user
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200/_security/user/filebeat_writer
+        method: PUT
+        url_username: elastic
+        url_password: "{{ elastic_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ filebeat_password }}"
+          roles: ["nginx_writer"]
+          full_name: Filebeat nginx log writer
+        status_code: 200
+      no_log: true

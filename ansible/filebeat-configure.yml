@@ -1,0 +1,81 @@
+---
+- name: Configure nginx log shipping
+  hosts: web
+  become: true
+  vars_prompt:
+    - name: filebeat_password
+      prompt: "Enter password for filebeat_writer"
+      private: true
+
+  tasks:
+    - name: Configure Filebeat
+      ansible.builtin.copy:
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          filebeat.inputs:
+            - type: filestream
+              id: nginx-access
+              enabled: true
+              paths:
+                - /var/log/nginx/access.log
+                - /var/log/nginx/access.log.1
+              fields_under_root: true
+              fields:
+                event:
+                  dataset: nginx.access
+
+            - type: filestream
+              id: nginx-error
+              enabled: true
+              paths:
+                - /var/log/nginx/error.log
+                - /var/log/nginx/error.log.1
+              fields_under_root: true
+              fields:
+                event:
+                  dataset: nginx.error
+
+          processors:
+            - add_host_metadata: ~
+
+          setup.ilm.enabled: false
+          setup.template.enabled: false
+
+          output.elasticsearch:
+            hosts: ["http://elasticsearch.ru-central1.internal:9200"]
+            username: filebeat_writer
+            password: {{ filebeat_password | to_json }}
+            index: "nginx-%{+yyyy.MM.dd}"
+
+          logging.level: info
+      no_log: true
+      diff: false
+      notify: Restart Filebeat
+
+    - name: Check Filebeat configuration
+      ansible.builtin.command:
+        cmd: filebeat test config -c /etc/filebeat/filebeat.yml
+      changed_when: false
+
+    - name: Check Elasticsearch connection
+      ansible.builtin.command:
+        cmd: filebeat test output -c /etc/filebeat/filebeat.yml
+      changed_when: false
+
+    - name: Enable and start Filebeat
+      ansible.builtin.systemd:
+        name: filebeat
+        enabled: true
+        state: started
+
+    - name: Apply pending restart
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Filebeat
+      ansible.builtin.systemd:
+        name: filebeat
+        state: restarted

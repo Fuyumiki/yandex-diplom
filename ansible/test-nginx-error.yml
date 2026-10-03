@@ -1,0 +1,38 @@
+---
+- name: Test nginx error log delivery
+  hosts: web
+  become: true
+  tasks:
+    - name: Create temporary empty directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/www/html
+        prefix: diplom-log-test-
+      register: test_directory
+
+    - block:
+        - name: Allow nginx to access directory
+          ansible.builtin.file:
+            path: "{{ test_directory.path }}"
+            mode: "0755"
+
+        - name: Request directory without index
+          ansible.builtin.uri:
+            url: "http://127.0.0.1/{{ test_directory.path | basename }}/"
+            status_code: 403
+
+        - name: Read recent nginx errors
+          ansible.builtin.command:
+            cmd: tail -n 3 /var/log/nginx/error.log
+          register: nginx_errors
+          changed_when: false
+
+        - name: Show nginx errors
+          ansible.builtin.debug:
+            var: nginx_errors.stdout_lines
+
+      always:
+        - name: Remove test directory
+          ansible.builtin.file:
+            path: "{{ test_directory.path }}"
+            state: absent
